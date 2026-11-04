@@ -16,7 +16,11 @@ import datetime as dt
 import html
 import json
 import os
+import fcntl
 import plistlib
+import pty
+import struct
+import termios
 import re
 import subprocess
 import sys
@@ -132,23 +136,44 @@ UNREACHABLE = ("not found", "no device", "devicenotfound", "connectionfailed", "
 PROGRESS_RE = re.compile(r"(\d{1,3})%\s+\d+/100")
 
 
-def watch_progress(udid, proc, logfile):
-    """Follow pymobiledevice3's progress bar and passcode prompts in the run log."""
-    def loop():
-        while proc.poll() is None:
-            time.sleep(5)
-            try:
-                with open(logfile, "rb") as f:
-                    f.seek(max(0, f.seek(0, 2) - 8192))
-                    tail = f.read().decode(errors="replace")
-            except OSError:
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def pump(udid, master, lf):
+    """Copy the backup's terminal output to the run log and track progress / passcode prompts.
+
+    pymobiledevice3 draws its progress bar only on a terminal, so it runs on a pty; the bar
+    redraws many times a second, so only percentage changes are written to the log.
+    """
+    buf, last = "", -1
+    while True:
+        try:
+            chunk = os.read(master, 65536)
+        except OSError:  # EIO once the child closes the pty
+            break
+        if not chunk:
+            break
+        buf += ANSI_RE.sub("", chunk.decode(errors="replace"))
+        *segments, buf = re.split(r"[\r\n]", buf)
+        for seg in segments:
+            m = PROGRESS_RE.search(seg)
+            if m:
+                pct = int(m.group(1))
+                if pct != last:
+                    last = pct
+                    lf.write(seg.strip() + "\n")
+                    lf.flush()
+                    update_state(udid, progress=pct)
                 continue
-            pct = PROGRESS_RE.findall(tail)
-            asks = tail.rfind("enter the device passcode")
-            done = tail.rfind("passcode prompt dismissed")
-            update_state(udid, progress=int(pct[-1]) if pct else load_state().get(udid, {}).get("progress", 0),
-                         waiting_passcode=asks > done)
-    threading.Thread(target=loop, daemon=True).start()
+            if seg.strip():
+                lf.write(seg.rstrip() + "\n")
+                lf.flush()
+                if "enter the device passcode" in seg:
+                    update_state(udid, waiting_passcode=True)
+                elif "passcode prompt dismissed" in seg:
+                    update_state(udid, waiting_passcode=False)
+    if buf.strip():
+        lf.write(buf.rstrip() + "\n")
 
 
 def usb_poller():
@@ -172,13 +197,20 @@ def backup_one(udid, usb):
                  waiting_passcode=False)
     log(f"{udid}: backup starting over {transport}")
     with open(logfile, "w") as lf:
-        proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT)
-        watch_progress(udid, proc, logfile)
+        master, slave = pty.openpty()
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 160, 0, 0))
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=slave, stderr=slave, close_fds=True,
+                                env=dict(os.environ, TERM="xterm", COLUMNS="160"))
+        os.close(slave)
+        reader = threading.Thread(target=pump, args=(udid, master, lf), daemon=True)
+        reader.start()
         try:
             rc = proc.wait(timeout=BACKUP_TIMEOUT_HOURS * 3600)
         except subprocess.TimeoutExpired:
             proc.kill()
             rc = -1
+        reader.join(timeout=30)
+        os.close(master)
     duration = time.time() - started
     tail = logfile.read_text(errors="replace").replace("\r", "\n").strip().splitlines()[-3:]
     message = " | ".join(tail)[-400:]

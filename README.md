@@ -76,12 +76,15 @@ You can also browse without iMazing:
 | `PORT` | `9871` | Status page + `/metrics` |
 | `RUN_ON_START` | `false` | Run a round when the container starts |
 | `USBMUXD` | `true` | `false` = Wi-Fi only |
+| `VERBOSE` | `false` | Debug logging from pymobiledevice3 into each run's log |
 
 Commands, all run with `docker exec ios-backup ios-backup ...`: `pair`, `backup [UDID]`,
 `status`, and `pmd3 ...` (passthrough to pymobiledevice3).
 
 Metrics: `ios_backup_last_success_timestamp_seconds`, `ios_backup_last_ok`,
 `ios_backup_size_bytes`, `ios_backup_last_duration_seconds`, `ios_backup_running`,
+`ios_backup_progress_percent`, `ios_backup_usb_connected`, `ios_backup_waiting_for_passcode`,
+`ios_backup_safe_to_unplug` (0 only while a USB backup is running),
 all labelled `udid`/`name`.
 
 ## Security

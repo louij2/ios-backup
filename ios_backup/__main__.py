@@ -17,6 +17,7 @@ import html
 import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import threading
@@ -40,6 +41,7 @@ NOTIFY_SUCCESS = os.environ.get("NOTIFY_SUCCESS", "false").lower() in ("1", "tru
 RUN_ON_START = os.environ.get("RUN_ON_START", "false").lower() in ("1", "true", "yes")
 USBMUXD = os.environ.get("USBMUXD", "true").lower() in ("1", "true", "yes")
 PMD3 = [sys.executable, "-m", "pymobiledevice3"]
+VERBOSE = os.environ.get("VERBOSE", "false").lower() in ("1", "true", "yes")
 
 STATE_FILE = CONFIG / "state.json"
 LOG_DIR = CONFIG / "logs"
@@ -127,30 +129,65 @@ UNREACHABLE = ("not found", "no device", "devicenotfound", "connectionfailed", "
                "timed out", "no route", "not connected", "nodeviceconnected")
 
 
+PROGRESS_RE = re.compile(r"(\d{1,3})%\s+\d+/100")
+
+
+def watch_progress(udid, proc, logfile):
+    """Follow pymobiledevice3's progress bar and passcode prompts in the run log."""
+    def loop():
+        while proc.poll() is None:
+            time.sleep(5)
+            try:
+                with open(logfile, "rb") as f:
+                    f.seek(max(0, f.seek(0, 2) - 8192))
+                    tail = f.read().decode(errors="replace")
+            except OSError:
+                continue
+            pct = PROGRESS_RE.findall(tail)
+            asks = tail.rfind("enter the device passcode")
+            done = tail.rfind("passcode prompt dismissed")
+            update_state(udid, progress=int(pct[-1]) if pct else load_state().get(udid, {}).get("progress", 0),
+                         waiting_passcode=asks > done)
+    threading.Thread(target=loop, daemon=True).start()
+
+
+def usb_poller():
+    """Keep a USB-connected flag per device, for the 'safe to unplug' view."""
+    while True:
+        usb = usb_udids()
+        for udid in paired_udids():
+            update_state(udid, usb_connected=udid in usb)
+        time.sleep(30)
+
+
 def backup_one(udid, usb):
     """Run one MobileBackup2 backup. Returns (ok, reachable, message)."""
     transport = "usb" if usb else "wifi"
-    cmd = PMD3 + ["backup2", "backup", str(BACKUPS), "--udid", udid] + ([] if usb else ["--mobdev2"])
+    cmd = PMD3 + (["-v"] if VERBOSE else []) + ["backup2", "backup", str(BACKUPS), "--udid", udid]
+    cmd += [] if usb else ["--mobdev2"]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logfile = LOG_DIR / f"{udid}-{dt.datetime.now():%Y%m%d-%H%M%S}.log"
     started = time.time()
-    update_state(udid, running=True, last_attempt=started, transport=transport)
+    update_state(udid, running=True, last_attempt=started, transport=transport, progress=0,
+                 waiting_passcode=False)
     log(f"{udid}: backup starting over {transport}")
-    try:
-        with open(logfile, "w") as lf:
-            rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT,
-                                timeout=BACKUP_TIMEOUT_HOURS * 3600).returncode
-    except subprocess.TimeoutExpired:
-        rc = -1
+    with open(logfile, "w") as lf:
+        proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT)
+        watch_progress(udid, proc, logfile)
+        try:
+            rc = proc.wait(timeout=BACKUP_TIMEOUT_HOURS * 3600)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            rc = -1
     duration = time.time() - started
     tail = logfile.read_text(errors="replace").replace("\r", "\n").strip().splitlines()[-3:]
     message = " | ".join(tail)[-400:]
     ok = rc == 0
     reachable = ok or not any(s in message.lower() for s in UNREACHABLE)
-    fields = dict(running=False, last_rc=rc, last_duration=round(duration), last_message=message,
+    fields = dict(running=False, waiting_passcode=False, last_rc=rc, last_duration=round(duration), last_message=message,
                   last_log=str(logfile))
     if ok:
-        fields.update(last_success=time.time(), size_bytes=backup_size(udid), name=device_name(udid))
+        fields.update(progress=100, last_success=time.time(), size_bytes=backup_size(udid), name=device_name(udid))
     update_state(udid, **fields)
     log(f"{udid}: {'OK' if ok else 'FAILED'} rc={rc} in {duration:.0f}s ({transport})")
     for old in sorted(LOG_DIR.glob(f"{udid}-*.log"))[:-30]:  # keep the last 30 logs per device
@@ -224,8 +261,15 @@ def metrics():
                 lines.append(f'ios_backup_{metric}{{udid="{udid}",name="{s.get("name", udid)}"}} {s[key]}')
     lines.append("# TYPE ios_backup_last_ok gauge")
     lines.append("# TYPE ios_backup_running gauge")
+    for name in ("progress_percent", "usb_connected", "waiting_for_passcode", "safe_to_unplug"):
+        lines.append(f"# TYPE ios_backup_{name} gauge")
     for udid, s in st.items():
         lab = f'udid="{udid}",name="{s.get("name", udid)}"'
+        busy_usb = bool(s.get("running")) and s.get("transport") == "usb"
+        lines.append(f"ios_backup_progress_percent{{{lab}}} {s.get('progress', 0) if s.get('running') else 0}")
+        lines.append(f"ios_backup_usb_connected{{{lab}}} {1 if s.get('usb_connected') else 0}")
+        lines.append(f"ios_backup_waiting_for_passcode{{{lab}}} {1 if s.get('waiting_passcode') else 0}")
+        lines.append(f"ios_backup_safe_to_unplug{{{lab}}} {0 if busy_usb else 1}")
         if "last_rc" in s:
             lines.append(f"ios_backup_last_ok{{{lab}}} {1 if s['last_rc'] == 0 else 0}")
         lines.append(f"ios_backup_running{{{lab}}} {1 if s.get('running') else 0}")
@@ -242,10 +286,10 @@ def status_page():
     for udid in sorted(set(paired_udids()) | set(st)):
         s = st.get(udid, {})
         ok = s.get("last_rc") == 0
-        badge = "running" if s.get("running") else ("ok" if ok else ("failed" if "last_rc" in s else "pending"))
+        badge = f"running {s.get('progress', 0)}%" if s.get("running") else ("ok" if ok else ("failed" if "last_rc" in s else "pending"))
         rows.append(
             f"<tr><td>{html.escape(s.get('name', udid))}<br><small>{udid}</small></td>"
-            f"<td class={badge}>{badge}</td><td>{fmt_ts(s.get('last_success'))}</td>"
+            f"<td class={badge.split()[0]}>{badge}</td><td>{fmt_ts(s.get('last_success'))}</td>"
             f"<td>{fmt_ts(s.get('last_attempt'))} ({s.get('transport', '-')})</td>"
             f"<td>{s.get('size_bytes', 0) / 1e9:.1f} GB</td>"
             f"<td><small>{html.escape(s.get('last_message', ''))}</small></td>"
@@ -321,6 +365,7 @@ def cmd_serve(_args):
     log(f"ios-backup {__version__}: devices {paired_udids() or 'none paired yet'}; schedule {TIMES}")
     start_usbmuxd()
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=usb_poller, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
 
 

@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ios-backup</Name>
+  <Repository>louij2/ios-backup:latest</Repository>
+  <Registry>https://hub.docker.com/r/louij2/ios-backup</Registry>
+  <Network>host</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>true</Privileged>
+  <Support>https://github.com/louij2/ios-backup/issues</Support>
+  <Project>https://github.com/louij2/ios-backup</Project>
+  <ReadMe>https://raw.githubusercontent.com/louij2/ios-backup/main/README.md</ReadMe>
+  <Overview>Nightly iPhone/iPad backups straight to your array, over Wi-Fi - no Mac, no Windows VM. Makes standard Finder/iTunes (MobileBackup2) backups, so iMazing, Finder or iTunes can open them later, encrypted backups included. Built on pymobiledevice3. Pair each device once over USB (docker exec ios-backup ios-backup pair), then it finds the phone on the LAN via Bonjour every night. Status page + Prometheus /metrics on port 9871, optional Discord alerts.</Overview>
+  <Category>Backup: Tools:</Category>
+  <WebUI>http://[IP]:[PORT:9871]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/louij2/unraid-templates/master/templates/ios-backup.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/louij2/ios-backup/main/unraid/icon.png</Icon>
+  <ExtraParams>--restart=unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <Requires>Host networking (Bonjour discovery). Privileged + /dev/bus/usb only for USB pairing / USB backups; Wi-Fi-only use works unprivileged once a device is paired.</Requires>
+  <Config Name="Backups" Target="/backups" Default="/mnt/user/backups/ios" Mode="rw" Description="Each device gets a &lt;UDID&gt; folder in standard Finder/iTunes format" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/backups/ios</Config>
+  <Config Name="Config" Target="/config" Default="/mnt/user/appdata/ios-backup" Mode="rw" Description="State, logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/ios-backup</Config>
+  <Config Name="Pair records" Target="/var/lib/lockdown" Default="/mnt/user/appdata/ios-backup/lockdown" Mode="rw" Description="Device pair records - these grant full access to the paired devices; keep this folder private" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/ios-backup/lockdown</Config>
+  <Config Name="USB devices" Target="/dev/bus/usb" Default="/dev/bus/usb" Mode="rw" Description="For USB pairing and USB backups" Type="Path" Display="advanced" Required="false" Mask="false">/dev/bus/usb</Config>
+  <Config Name="udev" Target="/run/udev" Default="/run/udev" Mode="ro" Description="USB hotplug for usbmuxd" Type="Path" Display="advanced" Required="false" Mask="false">/run/udev</Config>
+  <Config Name="Backup times" Target="BACKUP_TIMES" Default="03:00" Mode="" Description="Comma-separated HH:MM (container TZ). Unreachable devices are retried every RETRY_MINUTES for RETRY_WINDOW_HOURS." Type="Variable" Display="always" Required="true" Mask="false">03:00</Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/London" Mode="" Description="Timezone for the schedule" Type="Variable" Display="always" Required="false" Mask="false">Europe/London</Config>
+  <Config Name="Web UI port" Target="PORT" Default="9871" Mode="" Description="Status page and /metrics" Type="Variable" Display="advanced" Required="false" Mask="false">9871</Config>
+  <Config Name="Discord webhook" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Optional: alert on failed backups" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Notify on success" Target="NOTIFY_SUCCESS" Default="false" Mode="" Description="true = also post successful backups" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Retry minutes" Target="RETRY_MINUTES" Default="20" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
+  <Config Name="Retry window hours" Target="RETRY_WINDOW_HOURS" Default="5" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">5</Config>
+  <Config Name="Only these UDIDs" Target="UDIDS" Default="" Mode="" Description="Optional comma list; default = every paired device" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>

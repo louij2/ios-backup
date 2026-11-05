@@ -10,7 +10,7 @@
   <Support>https://github.com/louij2/ios-backup/issues</Support>
   <Project>https://github.com/louij2/ios-backup</Project>
   <ReadMe>https://raw.githubusercontent.com/louij2/ios-backup/main/README.md</ReadMe>
-  <Overview>Nightly iPhone/iPad backups straight to your array, over Wi-Fi - no Mac, no Windows VM. Makes standard Finder/iTunes (MobileBackup2) backups, so iMazing, Finder or iTunes can open them later, encrypted backups included. Built on pymobiledevice3. Pair each device once over USB (docker exec ios-backup ios-backup pair), then it finds the phone on the LAN via Bonjour every night. Status page + Prometheus /metrics on port 9871, optional Discord alerts.</Overview>
+  <Overview>Nightly iPhone/iPad backups straight to your array, over Wi-Fi - no Mac, no Windows VM. Makes standard Finder/iTunes (MobileBackup2) backups, so iMazing, Finder or iTunes can open them later, encrypted backups included. Built on pymobiledevice3. Pair each device once over USB (docker exec ios-backup ios-backup pair), then it reaches the phone over a RemotePairing Wi-Fi tunnel every night. Status page + Prometheus /metrics on port 9871, optional Discord alerts.</Overview>
   <Category>Backup: Tools:</Category>
   <WebUI>http://[IP]:[PORT:9871]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/louij2/unraid-templates/master/templates/ios-backup.xml</TemplateURL>
@@ -18,7 +18,7 @@
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <PostArgs/>
   <CPUset/>
-  <Requires>Host networking (Bonjour discovery). Privileged + /dev/bus/usb only for USB pairing / USB backups; Wi-Fi-only use works unprivileged once a device is paired.</Requires>
+  <Requires>Host networking (Bonjour discovery) and privileged mode (Wi-Fi tunnel TUN interface, USB access). A USB port on the server is needed once per device for pairing.</Requires>
   <Config Name="Backups" Target="/backups" Default="/mnt/user/backups/ios" Mode="rw" Description="Each device gets a &lt;UDID&gt; folder in standard Finder/iTunes format" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/backups/ios</Config>
   <Config Name="Config" Target="/config" Default="/mnt/user/appdata/ios-backup" Mode="rw" Description="State, logs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/ios-backup</Config>
   <Config Name="Pair records" Target="/var/lib/lockdown" Default="/mnt/user/appdata/ios-backup/lockdown" Mode="rw" Description="Device pair records - these grant full access to the paired devices; keep this folder private" Type="Path" Display="advanced" Required="true" Mask="false">/mnt/user/appdata/ios-backup/lockdown</Config>

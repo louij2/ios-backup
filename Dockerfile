@@ -1,6 +1,7 @@
-FROM python:3.12-slim
+# Python 3.13+: iOS 18.2+ only allows TCP RemotePairing tunnels, which need TLS-PSK from 3.13's ssl module.
+FROM python:3.13-slim
 
-# usbmuxd: only needed for USB (first pairing / fast first backup); Wi-Fi backups use Bonjour (mobdev2).
+# usbmuxd: only needed for USB (pairing, fast first backup); Wi-Fi backups go through a RemotePairing tunnel.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends usbmuxd tini \
  && rm -rf /var/lib/apt/lists/*

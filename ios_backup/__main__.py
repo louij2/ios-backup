@@ -1,17 +1,18 @@
 """ios-backup: scheduled iPhone/iPad backups in Finder/iTunes (MobileBackup2) format.
 
 Backs up every paired device found in /var/lib/lockdown, over USB when the device is
-plugged in and over Wi-Fi (Bonjour "mobdev2") otherwise. The output is a standard
+plugged in and otherwise over Wi-Fi, through an iOS 17+ RemotePairing tunnel (tunneld). The output is a standard
 <backup dir>/<UDID>/ folder that Finder, iTunes and iMazing can open.
 
 Commands:
   serve                 scheduler + status page (default)
-  pair                  pair a USB-connected device and turn on Wi-Fi connections
+  pair                  pair a USB-connected device, including the remote pairing Wi-Fi needs
   backup [UDID...]      back up now, in the foreground
   status                print the last result for each device
   pmd3 ARGS...          run pymobiledevice3 directly (e.g. `pmd3 backup2 encryption`)
 """
 import argparse
+import asyncio
 import datetime as dt
 import html
 import json
@@ -45,6 +46,8 @@ NOTIFY_SUCCESS = os.environ.get("NOTIFY_SUCCESS", "false").lower() in ("1", "tru
 RUN_ON_START = os.environ.get("RUN_ON_START", "false").lower() in ("1", "true", "yes")
 USBMUXD = os.environ.get("USBMUXD", "true").lower() in ("1", "true", "yes")
 PMD3 = [sys.executable, "-m", "pymobiledevice3"]
+TUNNELD_PORT = 49151
+TUNNELD_URL = f"http://127.0.0.1:{TUNNELD_PORT}/"
 VERBOSE = os.environ.get("VERBOSE", "false").lower() in ("1", "true", "yes")
 
 STATE_FILE = CONFIG / "state.json"
@@ -114,6 +117,15 @@ def device_name(udid):
         return udid
 
 
+def wifi_tunnels():
+    """UDIDs tunneld currently holds a live Wi-Fi tunnel to."""
+    try:
+        with urllib.request.urlopen(TUNNELD_URL, timeout=5) as r:
+            return {u for u, tunnels in json.load(r).items() if tunnels}
+    except (OSError, ValueError):
+        return set()
+
+
 # --- notify --------------------------------------------------------------------------
 
 def notify(text):
@@ -130,7 +142,7 @@ def notify(text):
 # --- backup --------------------------------------------------------------------------
 
 UNREACHABLE = ("not found", "no device", "devicenotfound", "connectionfailed", "connection refused",
-               "timed out", "no route", "not connected", "nodeviceconnected")
+               "timed out", "no route", "not connected", "nodeviceconnected", "tunnel", "terminated abruptly")
 
 
 PROGRESS_RE = re.compile(r"(\d{1,3})%\s+\d+/100")
@@ -179,17 +191,22 @@ def pump(udid, master, lf):
 def usb_poller():
     """Keep a USB-connected flag per device, for the 'safe to unplug' view."""
     while True:
-        usb = usb_udids()
+        usb, wifi = usb_udids(), wifi_tunnels()
         for udid in paired_udids():
-            update_state(udid, usb_connected=udid in usb)
+            update_state(udid, usb_connected=udid in usb, wifi_tunnel=udid in wifi)
         time.sleep(30)
 
 
 def backup_one(udid, usb):
     """Run one MobileBackup2 backup. Returns (ok, reachable, message)."""
     transport = "usb" if usb else "wifi"
+    if not usb and udid not in wifi_tunnels():
+        msg = "not reachable: no USB and no Wi-Fi tunnel (phone asleep or away?)"
+        update_state(udid, last_attempt=time.time(), transport=transport, last_rc=1, last_message=msg)
+        log(f"{udid}: {msg}")
+        return False, False, msg
     cmd = PMD3 + (["-v"] if VERBOSE else []) + ["backup2", "backup", str(BACKUPS), "--udid", udid]
-    cmd += [] if usb else ["--mobdev2"]
+    cmd += [] if usb else ["--tunnel", udid]
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     logfile = LOG_DIR / f"{udid}-{dt.datetime.now():%Y%m%d-%H%M%S}.log"
     started = time.time()
@@ -293,13 +310,14 @@ def metrics():
                 lines.append(f'ios_backup_{metric}{{udid="{udid}",name="{s.get("name", udid)}"}} {s[key]}')
     lines.append("# TYPE ios_backup_last_ok gauge")
     lines.append("# TYPE ios_backup_running gauge")
-    for name in ("progress_percent", "usb_connected", "waiting_for_passcode", "safe_to_unplug"):
+    for name in ("progress_percent", "usb_connected", "wifi_reachable", "waiting_for_passcode", "safe_to_unplug"):
         lines.append(f"# TYPE ios_backup_{name} gauge")
     for udid, s in st.items():
         lab = f'udid="{udid}",name="{s.get("name", udid)}"'
         busy_usb = bool(s.get("running")) and s.get("transport") == "usb"
         lines.append(f"ios_backup_progress_percent{{{lab}}} {s.get('progress', 0) if s.get('running') else 0}")
         lines.append(f"ios_backup_usb_connected{{{lab}}} {1 if s.get('usb_connected') else 0}")
+        lines.append(f"ios_backup_wifi_reachable{{{lab}}} {1 if s.get('wifi_tunnel') else 0}")
         lines.append(f"ios_backup_waiting_for_passcode{{{lab}}} {1 if s.get('waiting_passcode') else 0}")
         lines.append(f"ios_backup_safe_to_unplug{{{lab}}} {0 if busy_usb else 1}")
         if "last_rc" in s:
@@ -393,9 +411,47 @@ def start_usbmuxd():
     log("usbmuxd did not come up: USB unavailable, Wi-Fi only")
 
 
+def tunneld_supervisor():
+    """Keep tunneld running: it holds the Wi-Fi tunnel for each remote-paired device in reach."""
+    cmd = PMD3 + ["remote", "tunneld", "--host", "127.0.0.1", "--port", str(TUNNELD_PORT), "--protocol", "tcp",
+                  "--wifi", "--no-usb", "--no-usbmux", "--no-mobdev2"]
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    while True:
+        with open(LOG_DIR / "tunneld.log", "a") as lf:
+            rc = subprocess.run(cmd, stdout=lf, stderr=subprocess.STDOUT, cwd=CONFIG).returncode
+        log(f"tunneld exited rc={rc}; restarting in 30 s")
+        time.sleep(30)
+
+
+async def create_remote_pair(host, port):
+    from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService
+    from pymobiledevice3.remote.tunnel_service import create_core_device_tunnel_service_using_rsd
+    async with RemoteServiceDiscoveryService((host, port)) as rsd:
+        svc = await create_core_device_tunnel_service_using_rsd(rsd, autopair=True)
+        return svc.pair_record_path
+
+
+def remote_pair():
+    """Create the RemotePairing record Wi-Fi tunnels need, through a temporary USB tunnel."""
+    tun = subprocess.Popen(PMD3 + ["lockdown", "start-tunnel", "--script-mode"], stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, text=True)
+    try:
+        line = tun.stdout.readline().split()
+        if len(line) != 2:
+            print("could not start a USB tunnel to the device")
+            return 1
+        path = asyncio.run(asyncio.wait_for(create_remote_pair(line[0], int(line[1])), 170))
+        path.chmod(0o600)
+        print("Remote pairing saved:", path)
+        return 0
+    finally:
+        tun.terminate()
+
+
 def cmd_serve(_args):
     log(f"ios-backup {__version__}: devices {paired_udids() or 'none paired yet'}; schedule {TIMES}")
     start_usbmuxd()
+    threading.Thread(target=tunneld_supervisor, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()
     threading.Thread(target=usb_poller, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
@@ -415,8 +471,8 @@ def cmd_pair(_args):
             return 1
         time.sleep(5)
     subprocess.run(PMD3 + ["lockdown", "wifi-connections", "on"])
-    print("Paired. Wi-Fi connections enabled. Device list:", paired_udids())
-    return 0
+    print("Paired. Device list:", paired_udids())
+    return remote_pair()
 
 
 def cmd_backup(args):

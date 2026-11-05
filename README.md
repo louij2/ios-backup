@@ -6,8 +6,9 @@ It writes standard **Finder/iTunes (MobileBackup2)** backups, so **iMazing**, Fi
 iTunes can open them later, encrypted backups included. Under the hood it's
 [pymobiledevice3](https://github.com/doronz88/pymobiledevice3).
 
-- Pair once over USB. After that, every night it finds the device on your LAN (Bonjour
-  `_apple-mobdev2`) and runs an incremental backup.
+- Pair once over USB. After that, every night it finds the device on your LAN and runs an
+  incremental backup through an encrypted RemotePairing tunnel, the Wi-Fi route Apple uses
+  for iOS 17 and later. The older Wi-Fi sync route no longer works on current iOS.
 - If the device is plugged into the server it uses USB instead, which is quicker for the
   first full backup.
 - A device that's asleep or away is retried every `RETRY_MINUTES` for `RETRY_WINDOW_HOURS`.
@@ -26,15 +27,15 @@ docker run -d --name ios-backup --network host --privileged --restart unless-sto
   louij2/ios-backup:latest
 ```
 
-`--network host` is required for Bonjour discovery. `--privileged` and `/dev/bus/usb` are
-only needed for USB, i.e. pairing and USB backups. Unraid users can install it from
+`--network host` is required for Bonjour discovery. `--privileged` is needed for the Wi-Fi
+tunnel (a TUN interface) and for USB; `/dev/bus/usb` is only needed for pairing and USB backups. Unraid users can install it from
 [louij2/unraid-templates](https://github.com/louij2/unraid-templates).
 
 ## Pair a device (once)
 
 1. Plug the iPhone into the server and unlock it.
 2. `docker exec -it ios-backup ios-backup pair`, then tap **Trust** and enter the passcode.
-   This also turns on Wi-Fi connections.
+   This also creates the remote pairing that Wi-Fi backups need.
 3. Optional but recommended: turn on **encrypted backups**. They also include saved
    passwords, Health and Wi-Fi networks:
    `docker exec -it ios-backup ios-backup pmd3 backup2 encryption on 'YOUR-BACKUP-PASSWORD'`
@@ -83,7 +84,8 @@ Commands, all run with `docker exec ios-backup ios-backup ...`: `pair`, `backup 
 
 Metrics: `ios_backup_last_success_timestamp_seconds`, `ios_backup_last_ok`,
 `ios_backup_size_bytes`, `ios_backup_last_duration_seconds`, `ios_backup_running`,
-`ios_backup_progress_percent`, `ios_backup_usb_connected`, `ios_backup_waiting_for_passcode`,
+`ios_backup_progress_percent`, `ios_backup_usb_connected`, `ios_backup_wifi_reachable`,
+`ios_backup_waiting_for_passcode`,
 `ios_backup_safe_to_unplug` (0 only while a USB backup is running),
 all labelled `udid`/`name`.
 

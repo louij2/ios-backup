@@ -1,12 +1,12 @@
 # ios-backup
 
-Nightly iPhone/iPad backups to your server, over Wi-Fi. No Mac, no Windows VM.
+Scheduled iPhone/iPad backups to your server, over Wi-Fi. No Mac, no Windows VM.
 
 It writes standard **Finder/iTunes (MobileBackup2)** backups, so **iMazing**, Finder or
 iTunes can open them later, encrypted backups included. Under the hood it's
 [pymobiledevice3](https://github.com/doronz88/pymobiledevice3).
 
-- Pair once over USB. After that, every night it finds the device on your LAN and runs an
+- Pair once over USB. After that, on your schedule it finds the device on your LAN and runs an
   incremental backup through an encrypted RemotePairing tunnel, the Wi-Fi route Apple uses
   for iOS 17 and later. The older Wi-Fi sync route no longer works on current iOS.
 - If the device is plugged into the server it uses USB instead, which is quicker for the
@@ -44,9 +44,14 @@ tunnel (a TUN interface) and for USB; `/dev/bus/usb` is only needed for pairing 
 4. First backup now: `docker exec -it ios-backup ios-backup backup`. A full backup over
    USB takes about 1 to 2 hours per 70 GB.
 
-Then unplug it. From now on it backs up over Wi-Fi at `BACKUP_TIMES`. Leave the phone on
-Wi-Fi and, ideally, charging overnight. The phone may ask for its passcode when a backup
-starts; that's iOS behaviour for encrypted backups.
+Then unplug it. From now on it backs up over Wi-Fi on your schedule.
+
+> **Backups need approving on the phone.** With encrypted backups on, iOS 26 shows a passcode
+> prompt when a backup starts on a locked phone, and the backup waits until it's answered. So
+> pick a time you usually have the phone (`BACKUP_DAYS=sun`, `BACKUP_TIMES=20:00`) rather than
+> the middle of the night. A Discord alert (`DISCORD_WEBHOOK_URL`) and the
+> `ios_backup_waiting_for_passcode` metric tell you when it's waiting. Whether unencrypted
+> backups skip the prompt is untested.
 
 > **Private Wi-Fi Address:** set it to **Fixed** (or Off) for your home network on the
 > phone, under Settings → Wi-Fi → (i). A rotating address breaks Wi-Fi sync for every
@@ -68,10 +73,11 @@ You can also browse without iMazing:
 | Variable | Default | |
 |---|---|---|
 | `BACKUP_TIMES` | `03:00` | Comma-separated `HH:MM`, container time zone (`TZ`) |
+| `BACKUP_DAYS` | – (daily) | Comma-separated days, e.g. `sun` or `mon,thu` |
 | `RETRY_MINUTES` | `20` | Retry interval while a device is unreachable |
 | `RETRY_WINDOW_HOURS` | `5` | Stop retrying after this long |
 | `BACKUP_TIMEOUT_HOURS` | `8` | Kill a stuck backup |
-| `DISCORD_WEBHOOK_URL` | – | Alert on failures |
+| `DISCORD_WEBHOOK_URL` | – | Alert on failures and when a backup needs approving |
 | `NOTIFY_SUCCESS` | `false` | Also post successes |
 | `UDIDS` | – | Only back up these devices; the default is every paired device |
 | `PORT` | `9871` | Status page + `/metrics` |

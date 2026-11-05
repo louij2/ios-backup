@@ -37,6 +37,8 @@ LOCKDOWN = Path("/var/lib/lockdown")
 CONFIG = Path(os.environ.get("CONFIG_DIR", "/config"))
 BACKUPS = Path(os.environ.get("BACKUP_DIR", "/backups"))
 TIMES = [t.strip() for t in os.environ.get("BACKUP_TIMES", "03:00").split(",") if t.strip()]
+WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+DAYS = {d.strip().lower()[:3] for d in os.environ.get("BACKUP_DAYS", "").split(",") if d.strip()}
 RETRY_MINUTES = float(os.environ.get("RETRY_MINUTES", "20"))
 RETRY_WINDOW_HOURS = float(os.environ.get("RETRY_WINDOW_HOURS", "5"))
 BACKUP_TIMEOUT_HOURS = float(os.environ.get("BACKUP_TIMEOUT_HOURS", "8"))
@@ -182,6 +184,7 @@ def pump(udid, master, lf):
                 lf.flush()
                 if "enter the device passcode" in seg:
                     update_state(udid, waiting_passcode=True)
+                    notify(f"🔐 Approve the backup on **{device_name(udid)}**: unlock it and enter the passcode.")
                 elif "passcode prompt dismissed" in seg:
                     update_state(udid, waiting_passcode=False)
     if buf.strip():
@@ -271,12 +274,21 @@ def run_round(udids=None, retry=True):
             time.sleep(RETRY_MINUTES * 60)
 
 
+def schedule_text():
+    days = ", ".join(sorted(DAYS, key=WEEKDAYS.index)) or "daily"
+    return f"{days} at {', '.join(TIMES)}"
+
+
 def next_run(now):
     candidates = []
     for t in TIMES:
         h, m = (int(x) for x in t.split(":"))
-        c = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        candidates.append(c if c > now else c + dt.timedelta(days=1))
+        day = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        for offset in range(8):
+            c = day + dt.timedelta(days=offset)
+            if c > now and (not DAYS or WEEKDAYS[c.weekday()] in DAYS):
+                candidates.append(c)
+                break
     return min(candidates)
 
 
@@ -351,7 +363,7 @@ table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;
 .ok{{color:#15803d}}.failed{{color:#b91c1c}}.running{{color:#1d4ed8}}.pending{{color:#666}}
 @media (prefers-color-scheme:dark){{body{{background:#111;color:#ddd}}td,th{{border-color:#333}}}}
 </style><h2>ios-backup {__version__}</h2>
-<p>Schedule: {", ".join(TIMES)} &middot; backups in <code>{BACKUPS}</code> &middot;
+<p>Schedule: {schedule_text()} &middot; backups in <code>{BACKUPS}</code> &middot;
 next round {next_run(dt.datetime.now()):%Y-%m-%d %H:%M}</p>
 <table><tr><th>Device</th><th>Status</th><th>Last success</th><th>Last attempt</th><th>Size</th><th>Last message</th><th></th></tr>
 {''.join(rows) or '<tr><td colspan=7>No paired devices. Plug one in and run <code>ios-backup pair</code>.</td></tr>'}
@@ -449,7 +461,7 @@ def remote_pair():
 
 
 def cmd_serve(_args):
-    log(f"ios-backup {__version__}: devices {paired_udids() or 'none paired yet'}; schedule {TIMES}")
+    log(f"ios-backup {__version__}: devices {paired_udids() or 'none paired yet'}; schedule {schedule_text()}")
     start_usbmuxd()
     threading.Thread(target=tunneld_supervisor, daemon=True).start()
     threading.Thread(target=scheduler, daemon=True).start()

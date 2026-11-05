@@ -10,7 +10,7 @@
   <Support>https://github.com/louij2/ios-backup/issues</Support>
   <Project>https://github.com/louij2/ios-backup</Project>
   <ReadMe>https://raw.githubusercontent.com/louij2/ios-backup/main/README.md</ReadMe>
-  <Overview>Nightly iPhone/iPad backups straight to your array, over Wi-Fi - no Mac, no Windows VM. Makes standard Finder/iTunes (MobileBackup2) backups, so iMazing, Finder or iTunes can open them later, encrypted backups included. Built on pymobiledevice3. Pair each device once over USB (docker exec ios-backup ios-backup pair), then it reaches the phone over a RemotePairing Wi-Fi tunnel every night. Status page + Prometheus /metrics on port 9871, optional Discord alerts.</Overview>
+  <Overview>Scheduled iPhone/iPad backups straight to your array, over Wi-Fi - no Mac, no Windows VM. Makes standard Finder/iTunes (MobileBackup2) backups, so iMazing, Finder or iTunes can open them later, encrypted backups included. Built on pymobiledevice3. Pair each device once over USB (docker exec ios-backup ios-backup pair), then it reaches the phone over a RemotePairing Wi-Fi tunnel on your schedule. Encrypted backups need approving with the passcode on the phone when they start. Status page + Prometheus /metrics on port 9871, optional Discord alerts.</Overview>
   <Category>Backup: Tools:</Category>
   <WebUI>http://[IP]:[PORT:9871]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/louij2/unraid-templates/master/templates/ios-backup.xml</TemplateURL>
@@ -25,9 +25,10 @@
   <Config Name="USB devices" Target="/dev/bus/usb" Default="/dev/bus/usb" Mode="rw" Description="For USB pairing and USB backups" Type="Path" Display="advanced" Required="false" Mask="false">/dev/bus/usb</Config>
   <Config Name="udev" Target="/run/udev" Default="/run/udev" Mode="ro" Description="USB hotplug for usbmuxd" Type="Path" Display="advanced" Required="false" Mask="false">/run/udev</Config>
   <Config Name="Backup times" Target="BACKUP_TIMES" Default="03:00" Mode="" Description="Comma-separated HH:MM (container TZ). Unreachable devices are retried every RETRY_MINUTES for RETRY_WINDOW_HOURS." Type="Variable" Display="always" Required="true" Mask="false">03:00</Config>
+  <Config Name="Backup days" Target="BACKUP_DAYS" Default="" Mode="" Description="Comma-separated days, e.g. sun or mon,thu. Blank = daily. Encrypted backups need approving on the phone, so pick a time you have it." Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="TZ" Target="TZ" Default="Europe/London" Mode="" Description="Timezone for the schedule" Type="Variable" Display="always" Required="false" Mask="false">Europe/London</Config>
   <Config Name="Web UI port" Target="PORT" Default="9871" Mode="" Description="Status page and /metrics" Type="Variable" Display="advanced" Required="false" Mask="false">9871</Config>
-  <Config Name="Discord webhook" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Optional: alert on failed backups" Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="Discord webhook" Target="DISCORD_WEBHOOK_URL" Default="" Mode="" Description="Optional: alert on failed backups and when a backup needs approving on the phone" Type="Variable" Display="always" Required="false" Mask="true"/>
   <Config Name="Notify on success" Target="NOTIFY_SUCCESS" Default="false" Mode="" Description="true = also post successful backups" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="Retry minutes" Target="RETRY_MINUTES" Default="20" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">20</Config>
   <Config Name="Retry window hours" Target="RETRY_WINDOW_HOURS" Default="5" Mode="" Description="" Type="Variable" Display="advanced" Required="false" Mask="false">5</Config>

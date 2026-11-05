@@ -83,6 +83,7 @@ You can also browse without iMazing:
 | `PORT` | `9871` | Status page + `/metrics` |
 | `RUN_ON_START` | `false` | Run a round when the container starts |
 | `USBMUXD` | `true` | `false` = Wi-Fi only |
+| `PUID` / `PGID` | `99` / `100` | Owner of finished backups (Unraid's `nobody:users`) |
 | `VERBOSE` | `false` | Debug logging from pymobiledevice3 into each run's log |
 
 Commands, all run with `docker exec ios-backup ios-backup ...`: `pair`, `backup [UDID]`,

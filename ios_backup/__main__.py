@@ -46,6 +46,8 @@ PORT = int(os.environ.get("PORT", "9871"))
 WEBHOOK = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
 NOTIFY_SUCCESS = os.environ.get("NOTIFY_SUCCESS", "false").lower() in ("1", "true", "yes")
 RUN_ON_START = os.environ.get("RUN_ON_START", "false").lower() in ("1", "true", "yes")
+PUID = int(os.environ.get("PUID", "99"))  # Unraid's nobody:users, so the backups are usable over SMB
+PGID = int(os.environ.get("PGID", "100"))
 USBMUXD = os.environ.get("USBMUXD", "true").lower() in ("1", "true", "yes")
 PMD3 = [sys.executable, "-m", "pymobiledevice3"]
 TUNNELD_PORT = 49151
@@ -108,6 +110,21 @@ def backup_size(udid):
             except OSError:
                 pass
     return total
+
+
+def fix_ownership(udid):
+    """The backup tool runs as root; hand the finished backup to PUID:PGID."""
+    top = BACKUPS / udid
+    for root, dirs, files in os.walk(top):
+        for name, mode in [(n, 0o775) for n in dirs] + [(n, 0o664) for n in files]:
+            path = os.path.join(root, name)
+            try:
+                os.chown(path, PUID, PGID)
+                os.chmod(path, mode)
+            except OSError as e:
+                log(f"{udid}: could not fix ownership of {path}: {e}")
+    os.chown(top, PUID, PGID)
+    os.chmod(top, 0o775)
 
 
 def device_name(udid):
@@ -241,6 +258,8 @@ def backup_one(udid, usb):
     if ok:
         fields.update(progress=100, last_success=time.time(), size_bytes=backup_size(udid), name=device_name(udid))
     update_state(udid, **fields)
+    if ok:
+        fix_ownership(udid)
     log(f"{udid}: {'OK' if ok else 'FAILED'} rc={rc} in {duration:.0f}s ({transport})")
     for old in sorted(LOG_DIR.glob(f"{udid}-*.log"))[:-30]:  # keep the last 30 logs per device
         old.unlink(missing_ok=True)
